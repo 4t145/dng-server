@@ -1,0 +1,21 @@
+[package]
+name = "room"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio-tungstenite = { workspace = true }
+tokio = { workspace = true, features = ["full", "tracing"] }
+
+rand = { workspace = true}
+
+futures-util = {workspace = true, default-features = false, features = ["async-await", "sink", "std"] }
+futures = {workspace = true}
+bincode = {workspace = true}
+serde = {workspace = true, features = ["derive"]}
+reqwest = {workspace = true}
+
+protocol = {path = "../protocol/"}
+
+#dbg
+console-subscriber = "0.1.3"
