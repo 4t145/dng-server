@@ -201,9 +201,10 @@ impl Room {
                                                         Ok(ok_res) => {
                                                             self.broadcast(PlayerResp::Notice{msg: "尝试解码".to_string()}).await;
                                                             if let Ok(bytes) = ok_res.bytes().await {
-                                                                if let Ok(res) = serde_json::from_slice::<LexiconData>(&bytes) {
-                                                                    let msg = format!("词库名称: {}， 容量{}", res.name, res.lexicon.len());
+                                                                if let Ok(lexicon_data) = serde_json::from_slice::<LexiconData>(&bytes) {
+                                                                    let msg = format!("已下载词库！名称: {}， 容量{}", lexicon_data.name, lexicon_data.lexicon.len());
                                                                     self.broadcast(PlayerResp::Notice{msg}).await;
+                                                                    self.config.lexicon = Lexicon::Git(lexicon_data)
                                                                 } else {
                                                                     let msg = format!("不合法的词库文件，请检查词库是否具有各自段");
                                                                     self.broadcast(PlayerResp::Warn{msg}).await;

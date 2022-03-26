@@ -17,7 +17,7 @@ serde_json = "*"
 reqwest = {workspace = true}
 
 protocol = {path = "../protocol/"}
-
+chrono = "0.4.19"
 regex = "*"
 #dbg
 console-subscriber = "0.1.3"

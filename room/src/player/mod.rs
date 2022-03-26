@@ -1,4 +1,5 @@
 use crate::consts::*;
+use crate::logger::log;
 use crate::types::*;
 use crate::room::RoomReq;
 use protocol::PlayerResponse;
@@ -79,14 +80,18 @@ impl Player {
         let logout_reminder = room_tx.clone();
         let _tx_handle = tokio::spawn(
             async move {
-                use tokio_tungstenite::tungstenite::error::Error::AlreadyClosed 
-                as AlreadyClosed;
+                use tokio_tungstenite::tungstenite::error::Error::{/* AlreadyClosed,  */Tls};
                 while let Some(ws_msg) = ws_from_room_rx.recv().await {
                     match ws_tx.send(ws_msg).await {
-                        Err(AlreadyClosed) => {
+                        Err(Tls(e)) => {
+                            log(format!("TLS error:\n{}", e));
                             logout_reminder.send(RoomReq::PlayerLogout(idx)).await.unwrap_or_default();
                             break;
                         }
+                        Err(_) => {
+                            logout_reminder.send(RoomReq::PlayerLogout(idx)).await.unwrap_or_default();
+                            break;
+                        },
                         _ => {},
                     };
                 }

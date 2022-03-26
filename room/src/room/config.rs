@@ -1,3 +1,5 @@
+use protocol::Lexicon as LexiconData;
+
 use crate::consts::*;
 pub struct Config {
     pub round_time: usize,
@@ -20,7 +22,7 @@ impl Config {
 pub enum Lexicon {
     Upload(Vec<String>),
     Server(u32),
-    Git(Vec<String>),
+    Git(LexiconData),
     _None
 }
 
@@ -42,7 +44,10 @@ impl Lexicon {
                 None
             },
             Lexicon::_None => None,
-            Lexicon::Git(_) => todo!(),
+            Lexicon::Git(lexicon_data) => {
+                let idx = rand::random::<usize>()%lexicon_data.lexicon.len();
+                Some(lexicon_data.lexicon[idx].clone())
+            },
         }
     }
 }

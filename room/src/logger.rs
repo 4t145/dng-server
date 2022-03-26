@@ -1,5 +1,5 @@
 pub fn log(msg:String) {
-    use std::time::SystemTime;
-    let now = SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap();
-    println!("[{:?}][INFO]{}",now , msg)
+    use chrono::{Local};
+    let date = Local::now();
+    println!("[{}][INFO]{}",date.format("%Y-%m-%d][%H:%M:%S") , msg)
 }
