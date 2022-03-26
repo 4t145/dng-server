@@ -1,5 +1,6 @@
-
+use crate::consts::*;
 pub struct Config {
+    pub round_time: usize,
     pub token: Option<u128>,
     pub lexicon: Lexicon,
     pub lexicon_lock: bool,
@@ -8,8 +9,9 @@ pub struct Config {
 impl Config {
     pub fn new() -> Self {
         Self {
+            round_time: 90,
             token: None,
-            lexicon: Lexicon::None,
+            lexicon: Lexicon::Server(0x7671b09a),
             lexicon_lock: false,
         }
     }
@@ -18,7 +20,8 @@ impl Config {
 pub enum Lexicon {
     Upload(Vec<String>),
     Server(u32),
-    None
+    Git(Vec<String>),
+    _None
 }
 
 impl Lexicon {
@@ -30,18 +33,16 @@ impl Lexicon {
             },
             Lexicon::Server(lexcodes) => {
                 // let idx = rand::random::<usize>()%lexcodes.len();
-                let query = format!("http://127.0.0.1:3030/rand-word/{:08x}",lexcodes);
-println!("{}", query);
+                let query = format!("http://{}/rand-word/{:08x}", LEX_SERVER, lexcodes);
                 if let Ok(resp) = reqwest::get(query).await {
-dbg!(&resp);
                     if let Ok(word) = resp.text().await {
-dbg!(&word);
                         return Some(word);
                     }
                 } 
                 None
             },
-            Lexicon::None => None,
+            Lexicon::_None => None,
+            Lexicon::Git(_) => todo!(),
         }
     }
 }

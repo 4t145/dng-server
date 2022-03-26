@@ -18,7 +18,7 @@ impl State {
         Self {
             stage: Stage::Unready,
             player_count: 0,
-            topic: "TOPIK_WƏRD".to_string(),
+            topic: "当你看到这个，意味着设置关键词的逻辑上出现了bug".to_string(),
         }
     }
 }

@@ -31,7 +31,7 @@ async fn main() {
     println!("initial http services");
     
 
-    let cors = warp::cors().allow_origin("http://127.0.0.1:8080").allow_methods(vec!["GET", "POST", "DELETE"]);
+    let cors = warp::cors().allow_any_origin().allow_methods(vec!["GET", "POST", "DELETE"]);
 
 
     let room_state_service=

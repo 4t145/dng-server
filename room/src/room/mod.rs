@@ -1,32 +1,52 @@
+// todo
+// 1. 把 <timer> 从 <onshot> 改成 <Notify>
+// 2. 拆分stage逻辑
+
 mod config;
 mod state;
 mod request;
 mod error;
 
-use std::collections::HashMap;
-use std::time::Duration;
+use {
+    std::collections::HashMap,
+    std::time::Duration,
 
-// use futures::{StreamExt, SinkExt};
+    tokio::sync::mpsc::{Sender, Receiver, channel},
+    tokio::sync::{watch, oneshot},
+    tokio::time::sleep,
+};
 
-use tokio::sync::mpsc::{Sender, Receiver, channel};
-use tokio::sync::{watch, oneshot};
+use {
+    config::Config,
+    state::State,
+    error::{RoomResult, ErrorKind},
+    request::{TimerType},
+};
 
-use config::Config;
-use state::State;
-use error::{RoomResult, ErrorKind};
-use tokio::time::sleep;
+use crate::{
+    consts::*,
+    room::config::Lexicon,
+    types::*,
+    player::*,
+    observer::{Observer},
+};
 
-use crate::consts::*;
-use crate::room::config::Lexicon;
-use crate::types::*;
-use crate::player::*;
-use crate::observer::{Observer};
-use request::{TimerType};
+
 pub use request::Request as RoomReq;
 
+use protocol::{
+    PlayerRequest as PlayerReq, 
+    PlayerResponse as PlayerResp, 
+    PlayerState, 
+    ObserverResponse as ObResp,
+    Lexicon as LexiconData
+};
 
-use protocol::{PlayerRequest as PlayerReq, PlayerResponse as PlayerResp, PlayerState, ObserverResponse as ObResp};
+
+
+
 pub struct Room {
+    name: Option<String>,
     config: Config,
     state: State,
 
@@ -40,12 +60,12 @@ pub struct Room {
 }
 
 impl Room {
-    pub fn new() -> Self {
+    pub fn new(name:Option<String>) -> Self {
         let (loopback, rm_rx) = channel::<RoomReq>(32);
         let (token_tx, _) = watch::channel(None);
 
         Self {
-
+            name,
             config: Config::new(),
             state: State::new(),
 
@@ -59,6 +79,7 @@ impl Room {
         }
     }
 
+    #[inline]
     pub fn get_tx(&self) -> Sender<RoomReq> {
         self.loopback.clone()
     }
@@ -66,7 +87,6 @@ impl Room {
     async fn login_player(&mut self, ws_stream: WsStream) -> RoomResult<()> {
         for idx in 0..ROOM_SIZE {
             if self.players[idx].is_none() {
-
                 let player = Player::new(idx, ws_stream, self.get_tx());
                 self.players[idx] = Some(player);
                 self.state.player_count += 1;
@@ -81,17 +101,16 @@ impl Room {
 
     async fn login_observer(&mut self, ws_stream: WsStream, name: String, addr: String) {
         let ob = Observer::new(name, addr, ws_stream, self.loopback.clone());
-        
         let key = ob.localname.clone();
+        ob.send(self.get_room_states()).await;
         self.observers.insert(key, ob);
-        self.feed(self.get_room_states()).await;
     }
 
     async fn logout(&mut self, idx: usize) {
-        self.feed(self.get_room_states()).await;
-        self.broadcast(PlayerResp::PlayerStates(self.player_states())).await;
         self.state.player_count -= 1;
         self.players[idx].take();
+        self.feed(self.get_room_states()).await;
+        self.broadcast(PlayerResp::PlayerStates(self.player_states())).await;
     }
 
 
@@ -105,8 +124,9 @@ impl Room {
 
     pub async fn run(&mut self) {
         use state::Stage;
-        let mut stopper = None;
+        let mut timer = None;
         let mut timepoint = 0;
+        let github_re = regex::Regex::new(r"^https?://github.com/(.*)/(.*)/blob/(.*\.json)$").unwrap();
         loop{ match self.state.stage {
             Stage::Unready => {
                 if let Some(req) = self.rm_rx.recv().await {
@@ -140,9 +160,79 @@ impl Room {
                                     self.broadcast(PlayerResp::Notice{msg}).await;
                                 }
                                 PlayerReq::LexiconService (lexcodes) => {
-                                    self.config.lexicon = Lexicon::Server(lexcodes);
-                                    let msg = format!("{} 添加了服务器词库", self.get_name(idx));
+                                    let msg = format!("{} 加载了服务器词库, 正在获取词库信息", self.get_name(idx));
                                     self.broadcast(PlayerResp::Notice{msg}).await;
+                                    match reqwest::get(format!("http://{}/name/{}", LEX_SERVER, lexcodes)).await {
+                                        Ok(res) => {
+                                            match res.error_for_status() {
+                                                Ok(ok_res) => {
+                                                    let name = ok_res.text().await.unwrap_or("<无法解析的名称>".to_string());
+                                                    let msg = format!("词库可用！词库名称：{}", name);
+                                                    self.broadcast(PlayerResp::Notice { msg }).await;
+                                                    self.config.lexicon = Lexicon::Server(lexcodes);
+                                                }
+                                                Err(err) => {
+                                                    let msg = format!("词库响应 {}， 请检查你的词库码是否正确，不过也可能是词库挂了", err.status().unwrap_or_default());
+                                                    self.broadcast(PlayerResp::Warn { msg }).await;
+                                                }
+                                            }
+                                        },
+                                        Err(err) => {
+                                            let msg = format!("怎么会是呢，词库没反应啊！错误消息：{}", err);
+                                            self.broadcast(PlayerResp::Warn { msg }).await;
+                                        },
+                                    }
+                                },
+                                PlayerReq::LexiconGit (path) => {
+                                    // for example: https://github.com/4t145/repo/blob/master/dirname/filename.json
+                                    let msg = format!("{} 加载了Github词库, 正在获取词库信息", self.get_name(idx));
+                                    self.broadcast(PlayerResp::Notice{msg}).await;
+                                    if let Some(caps) = github_re.captures(path.as_str()) {
+                                        if caps.len() == 4 {
+                                            let user = caps.get(1).unwrap().as_str();
+                                            let repo = caps.get(2).unwrap().as_str();
+                                            let file = caps.get(3).unwrap().as_str();
+                                            let resource = format!("https://raw.githubusercontent.com/{}/{}/{}", user, repo, file);
+                                            let msg = format!("尝试下载资源 {}", resource);
+                                            self.broadcast(PlayerResp::Notice{msg}).await;
+                                            match reqwest::get(resource).await {
+                                                Ok(res) => {
+                                                    match res.error_for_status() {
+                                                        Ok(ok_res) => {
+                                                            self.broadcast(PlayerResp::Notice{msg: "尝试解码".to_string()}).await;
+                                                            if let Ok(bytes) = ok_res.bytes().await {
+                                                                if let Ok(res) = serde_json::from_slice::<LexiconData>(&bytes) {
+                                                                    let msg = format!("词库名称: {}， 容量{}", res.name, res.lexicon.len());
+                                                                    self.broadcast(PlayerResp::Notice{msg}).await;
+                                                                } else {
+                                                                    let msg = format!("不合法的词库文件，请检查词库是否具有各自段");
+                                                                    self.broadcast(PlayerResp::Warn{msg}).await;
+                                                                }
+                                                            } else {
+                                                                let msg = format!("无法解码，请检查词库格式/地址");
+                                                                self.broadcast(PlayerResp::Warn{msg}).await;
+                                                            }
+                                                        }
+                                                        Err(err) => {
+                                                            let msg = format!("网络错误， 状态码：{}", err.status().unwrap_or_default());
+                                                            self.broadcast(PlayerResp::Warn { msg }).await;
+                                                        }
+                                                    }
+                                                },
+                                                Err(err) => {
+                                                    let msg = format!("网络错误：{}", err);
+                                                    self.broadcast(PlayerResp::Warn { msg }).await;
+                                                },
+                                            }
+                                        } else {
+                                            let msg = format!("地址只对了一半捏");
+                                            self.broadcast(PlayerResp::Warn { msg }).await;
+                                        }
+                                    } else {
+                                        let msg = format!("地址似乎不太对捏");
+                                        self.broadcast(PlayerResp::Warn { msg }).await;
+                                    }
+
                                 },
                                 _ => {}
                             }
@@ -168,7 +258,7 @@ impl Room {
                     self.send(first, PlayerResp::Topic {
                         topic_word: self.state.topic.clone()
                     }).await;
-                    stopper = Some(self.set_timer(60, TimerType::Draw));
+                    timer = Some(self.set_timer(self.config.round_time, TimerType::Draw));
                     timepoint = 0;
                     Stage::Drawing(first)
                 } else {
@@ -203,9 +293,9 @@ impl Room {
                                         }
                                     }
                                 },
-                                protocol::PlayerRequest::Frame { bin } => {
+                                protocol::PlayerRequest::Chunk { bin } => {
                                     if drawer_idx == idx {
-                                        let req = PlayerResp::Frame {bin};
+                                        let req = PlayerResp::Chunk {bin};
                                         self.broadcast_except(req, idx).await;
                                     }
                                 },
@@ -228,8 +318,8 @@ impl Room {
                 if self.every_one_right(drawer_idx) || timesup {
                     self.broadcast(PlayerResp::TurnEnd).await;
                     self.broadcast_except(PlayerResp::Poll, drawer_idx).await;
-                    let _ = stopper.unwrap().send(());
-                    stopper = Some(self.set_timer(5, TimerType::Mark));
+                    let _ = timer.unwrap().send(());
+                    timer = Some(self.set_timer(5, TimerType::Mark));
                     timepoint = 0;
                     self.state.stage = Stage::Marking(drawer_idx);
                     self.broadcast(PlayerResp::MarkStart).await;
@@ -271,7 +361,7 @@ impl Room {
                                 self.send(next, PlayerResp::Topic {
                                     topic_word: self.state.topic.clone()
                                 }).await;
-                                stopper = Some(self.set_timer(60, TimerType::Draw));
+                                timer = Some(self.set_timer(self.config.round_time, TimerType::Draw));
                                 Stage::Drawing(next)
                             } else {
                                 Stage::Over
@@ -302,7 +392,7 @@ impl Room {
     }
 
 
-
+    #[inline]
     pub async fn send(&mut self, idx:usize, resp: PlayerResp) {
         if let Some(ref player ) = self.players[idx] {
             player.send(resp).await
@@ -381,6 +471,7 @@ impl Room {
         is_every_one_right
     }
 
+    #[inline]
     fn get_name(&self, idx:usize) -> String {
         self.players[idx].as_ref().unwrap().name.clone()
     }
@@ -404,16 +495,17 @@ impl Room {
         let playercount = self.state.player_count as u8;
         let user_lexicon = match self.config.lexicon {
             config::Lexicon::Upload(_) => true,
+            config::Lexicon::Git(_) => true,
             config::Lexicon::Server(_) => false,
-            config::Lexicon::None => false,
+            config::Lexicon::_None => false,
         };
         let lexicon = match self.config.lexicon {
             config::Lexicon::Server(ref codes) => codes.clone(),
             _ => 0
         };
-
+        let name = self.name.clone();
         ObResp::RoomState(protocol::RoomState{
-            stage, playercount, user_lexicon, lexicon
+            stage, playercount, user_lexicon, lexicon, name
         })
     }
 
@@ -433,6 +525,7 @@ impl Room {
         return None;
     }
 
+    #[inline]
     fn check_answer(&self, answer:&String) -> bool {
         answer.contains(&self.state.topic)
     }

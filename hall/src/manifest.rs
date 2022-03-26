@@ -3,7 +3,7 @@ use protocol::RoomState;
 use tokio::task::JoinHandle;
 
 // use async_trait::async_trait;
-use futures_util::{StreamExt, SinkExt, /* SinkExt */};
+use futures_util::{StreamExt, /* SinkExt */};
 use tokio::sync::RwLock;
 use std::sync::Arc;
 use tokio_tungstenite::{connect_async, tungstenite::{Message}};
@@ -15,7 +15,7 @@ use protocol::*;
 
 pub struct RoomConnection {
     pub handle: JoinHandle<()>,
-    pub watcher: tokio::sync::watch::Receiver<RoomState>
+    pub watcher: tokio::sync::watch::Receiver<Option<RoomState>>
 }
 
 pub struct RoomItem {
@@ -57,7 +57,7 @@ impl RoomItem {
         let url = format!("ws://{}/ob", self.url);
         if let Ok((ws_stream, _resp)) = connect_async(url).await {
             let (mut _tx, mut rx) = ws_stream.split();
-            let (reposter, watcher) = watch::channel(RoomState::default());
+            let (reposter, watcher) = watch::channel(None);
             let handle = tokio::spawn(
                 async move {
                     use tokio::time::{Instant, Duration};
@@ -68,21 +68,25 @@ impl RoomItem {
                             Message::Text(_) => {},
                             Message::Binary(bin) => {
                                 if let Ok(ObserverResponse::RoomState(room_state)) = ObserverResponse::deser(&bin) {
-                                    reposter.send(room_state).unwrap_or_default();
+                                    reposter.send(Some(room_state)).unwrap_or_default();
                                 }
                             },
                             Message::Ping(_) => {
                                 last_ping = now;
                             },
                             Message::Pong(_) => {},
-                            Message::Close(_) => {return;},
+                            Message::Close(_) => {
+                                break;
+                            },
                             Message::Frame(_) => {},
                         }
 
                         if now - last_ping > Duration::from_secs(60) {
+
                             break;
                         }
                     }
+                    reposter.send(None).unwrap_or_default();
                 }
             );
             let conn = RoomConnection {

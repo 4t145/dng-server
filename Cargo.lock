@@ -1432,8 +1432,10 @@ dependencies = [
  "futures-util",
  "protocol",
  "rand",
+ "regex",
  "reqwest",
  "serde",
+ "serde_json",
  "tokio",
  "tokio-tungstenite 0.17.1",
 ]

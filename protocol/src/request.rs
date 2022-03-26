@@ -12,7 +12,7 @@ pub enum PlayerRequest {
     },
     ImReady,
     ImUnready,
-    Frame {
+    Chunk {
         bin: Vec<u8>
     },
     Mark {
@@ -20,6 +20,7 @@ pub enum PlayerRequest {
     },
     Lexicon(Vec<String>),
     LexiconService(u32),
+    LexiconGit(String),
 }
 
 impl BinCodeMessage<'_> for PlayerRequest {}

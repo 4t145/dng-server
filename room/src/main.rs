@@ -17,22 +17,21 @@ mod observer;
 use tokio::net::{TcpListener};
 // use tokio::sync::{oneshot, mpsc};
 use crate::logger::log;
+use crate::consts::*;
 // use types::*;
 // use std::env;
 #[tokio::main]
 async fn main() {
+
     console_subscriber::init();
-    let launch_time = tokio::time::Instant::now();
     let mut handles = vec![];
-    for port in 9000..9020 {
+
+    for port in PORT_FROM..PORT_TO {
         let handle = tokio::spawn(
             run_on_port(port)
         );
         handles.push(handle);
     }
-    let launch_finished_time = tokio::time::Instant::now();
-    let duration = (launch_finished_time-launch_time).as_micros();
-    log(format!("launch in {}ms", duration));
 
     for h in handles {
         let s = tokio::join!(h).0.unwrap_or(Ok(()));
@@ -45,7 +44,8 @@ async fn run_on_port(port: u16) -> Result<(), ()> {
     let try_socket = TcpListener::bind(format!("0.0.0.0:{}", port)).await;
     let listener = try_socket.expect("Failed to bind");
     log(format!("listening on port {}", port));
-    let mut room = room::Room::new();
+    let name = format!("零号机-{}", port);
+    let mut room = room::Room::new(Some(name));
     let token_watcher = room.subscribe_token();
     let room_tx = room.get_tx();
     let _handle_room = tokio::spawn(async move {room.run().await});
@@ -56,7 +56,7 @@ async fn run_on_port(port: u16) -> Result<(), ()> {
         tokio::spawn(async move {
             let (login_res_tx, login_res_rx) = tokio::sync::oneshot::channel::<LoginType>();
             let addr = stream.peer_addr().expect("connected streams should have a peer address");
-            log(format!("Listening on: {}", addr));
+            log(format!("new connection on: {}", addr));
             let ws_stream = tokio_tungstenite::accept_hdr_async(stream, Callback{
                 login_result: login_res_tx,
                 token_reciever: token_watcher_clone

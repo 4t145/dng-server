@@ -3,6 +3,8 @@ use tokio::sync::RwLock;
 use std::sync::Arc;
 use serde::{Serialize, /* Deserialize */};
 
+// 这个文件目前没有任何用
+
 #[derive(Serialize)]
 pub struct PortAndKey {
     port: u16,

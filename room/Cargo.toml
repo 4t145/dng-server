@@ -13,9 +13,11 @@ futures-util = {workspace = true, default-features = false, features = ["async-a
 futures = {workspace = true}
 bincode = {workspace = true}
 serde = {workspace = true, features = ["derive"]}
+serde_json = "*"
 reqwest = {workspace = true}
 
 protocol = {path = "../protocol/"}
 
+regex = "*"
 #dbg
 console-subscriber = "0.1.3"

@@ -23,6 +23,7 @@ pub enum Stage {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct RoomState {
+    pub name: Option<String>,
     pub stage: String,
     pub playercount: u8,
     pub user_lexicon: bool,
@@ -38,12 +39,15 @@ pub enum PlayerResponse {
     Notice {
         msg: String
     },
+    Warn {
+        msg: String
+    },
     GameStart,
     GameEnd,
     Topic {
         topic_word: String
     },
-    Frame {
+    Chunk {
         bin: Vec<u8>
     },
 
