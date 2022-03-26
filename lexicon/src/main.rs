@@ -9,6 +9,8 @@ mod db;
 struct Args {
     #[clap(short, long)]
     db: String,
+    #[clap(short, long)]
+    port: u16,
 }
 
 
@@ -31,7 +33,7 @@ async fn main() {
 
 
     warp::serve(rand_word_service.or(name_query_service))
-        .run(([0, 0, 0, 0], 3030))
+        .run(([0, 0, 0, 0], args.port))
         .await;
 }
 

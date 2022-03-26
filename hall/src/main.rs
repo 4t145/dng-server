@@ -5,6 +5,7 @@ use warp::{Filter, reject, reply::Json};
 use roommap::RoomMap;
 use manifest::{Manifest, ManifestResp};
 
+use clap::Parser;
 
 // use std::env;
 // use log::{info, warn};
@@ -15,14 +16,22 @@ mod manifest;
 // FROM 9000 TO 9100
 const PUB_PORT:u16 = 9000;
 const PUB_SIZE:u16 = 20;
-const ROOM_SERVER_IP:&str = "127.0.0.1";
+// const ROOM_SERVER_IP:&str = "127.0.0.1";
 
-
+#[derive(Parser, Debug)]
+#[clap(author, version, about, long_about = None)]
+struct Args {
+    #[clap(short, long)]
+    roomip: String,
+    #[clap(short, long)]
+    port: u16,
+}
 
 #[tokio::main]
 async fn main() {
+    let args = Args::parse();
     println!("try to observe ports");
-    let mut manifest = Manifest::from_ports(ROOM_SERVER_IP, PUB_PORT..PUB_PORT+PUB_SIZE);
+    let mut manifest = Manifest::from_ports(args.roomip, PUB_PORT..PUB_PORT+PUB_SIZE);
     manifest.ob_all().await;
     let manifest_resp = ManifestResp::from(&manifest);
     let manifest = manifest.rwlock();
@@ -54,7 +63,7 @@ async fn main() {
 
     
 
-    warp::serve(room_jump_service.or(room_state_service).or(manifest_service)).run(([0,0,0,0], 7001)).await;
+    warp::serve(room_jump_service.or(room_state_service).or(manifest_service)).run(([0,0,0,0], args.port)).await;
 }
 
 

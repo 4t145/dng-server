@@ -107,8 +107,9 @@ impl Room {
     }
 
     async fn logout(&mut self, idx: usize) {
-        self.state.player_count -= 1;
-        self.players[idx].take();
+        if self.players[idx].take().is_some() {
+            self.state.player_count -= 1;
+        }
         self.feed(self.get_room_states()).await;
         self.broadcast(PlayerResp::PlayerStates(self.player_states())).await;
     }
