@@ -42,9 +42,6 @@ use protocol::{
     Lexicon as LexiconData
 };
 
-
-
-
 pub struct Room {
     name: Option<String>,
     config: Config,
@@ -77,6 +74,20 @@ impl Room {
 
             token_tx
         }
+    }
+
+    pub fn _abort(&mut self) {
+        for p in &mut self.players {
+            if let Some(player) = p{
+                player._abort();
+            }
+        }
+        self.players = Default::default();
+        self.state.player_count = 0;
+        for (_,ob) in &mut self.observers {
+            ob._abort()
+        }
+        self.observers.clear()
     }
 
     #[inline]
@@ -128,269 +139,282 @@ impl Room {
         let mut timer = None;
         let mut timepoint = 0;
         let github_re = regex::Regex::new(r"^https?://github.com/(.*)/(.*)/blob/(.*\.json)$").unwrap();
-        loop{ match self.state.stage {
-            Stage::Unready => {
-                if let Some(req) = self.rm_rx.recv().await {
-                    match req {
-                        RoomReq::PlayerReq(idx, req) => {
-                            match req {
-                                PlayerReq::SetName { name}  => {
-                                    self.players[idx].as_mut().unwrap().set_name(name);
-                                    self.broadcast(PlayerResp::PlayerStates(self.player_states())).await;
-                                },
-                                PlayerReq::Chat {msg} => {
-                                    let sender_name = self.players[idx].as_ref().and_then(|p|Some(p.get_name())).unwrap_or_default();
-                                    self.broadcast_except(PlayerResp::Chat {sender: sender_name, msg: msg}, idx).await;
-                                },
-                                PlayerReq::ImReady  => {
-                                    self.players[idx].as_mut().unwrap().ready();
-                                    self.broadcast(PlayerResp::PlayerStates(self.player_states())).await;
-                                    if self.every_one_ready() {
-                                        self.state.stage = Stage::Ready;
-                                        self.broadcast(PlayerResp::GameStart).await;
-                                        self.feed(self.get_room_states()).await;
+        loop{ 
+            // if signal. {
+            //     self._abort();
+            //     return;
+            // }
+
+            match self.state.stage {
+                Stage::Unready => {
+                    if let Some(req) = self.rm_rx.recv().await {
+                        match req {
+                            RoomReq::PlayerReq(idx, req) => {
+                                match req {
+                                    PlayerReq::SetName { name}  => {
+                                        self.players[idx].as_mut().unwrap().set_name(name);
+                                        self.broadcast(PlayerResp::PlayerStates(self.player_states())).await;
+                                    },
+                                    PlayerReq::Chat {msg} => {
+                                        let sender_name = self.players[idx].as_ref().and_then(|p|Some(p.get_name())).unwrap_or_default();
+                                        self.broadcast_except(PlayerResp::Chat {sender: sender_name, msg: msg}, idx).await;
+                                    },
+                                    PlayerReq::ImReady  => {
+                                        self.players[idx].as_mut().unwrap().ready();
+                                        self.broadcast(PlayerResp::PlayerStates(self.player_states())).await;
+                                        if self.every_one_ready() {
+                                            self.state.stage = Stage::Ready;
+                                            self.broadcast(PlayerResp::GameStart).await;
+                                            self.feed(self.get_room_states()).await;
+                                        }
+                                    },
+                                    PlayerReq::ImUnready => {
+                                        self.players[idx].as_mut().unwrap().unready();
+                                        self.broadcast(PlayerResp::PlayerStates(self.player_states())).await;
+                                    },
+                                    PlayerReq::Lexicon (lexicon)=> {
+                                        self.config.lexicon = Lexicon::Upload(lexicon);
+                                        let msg = format!("{} 上传了词库", self.get_name(idx));
+                                        self.broadcast(PlayerResp::Notice{msg}).await;
                                     }
-                                },
-                                PlayerReq::ImUnready => {
-                                    self.players[idx].as_mut().unwrap().unready();
-                                    self.broadcast(PlayerResp::PlayerStates(self.player_states())).await;
-                                },
-                                PlayerReq::Lexicon (lexicon)=> {
-                                    self.config.lexicon = Lexicon::Upload(lexicon);
-                                    let msg = format!("{} 上传了词库", self.get_name(idx));
-                                    self.broadcast(PlayerResp::Notice{msg}).await;
-                                }
-                                PlayerReq::LexiconService (lexcodes) => {
-                                    let msg = format!("{} 加载了服务器词库, 正在获取词库信息", self.get_name(idx));
-                                    self.broadcast(PlayerResp::Notice{msg}).await;
-                                    match reqwest::get(format!("http://{}/name/{}", LEX_SERVER, lexcodes)).await {
-                                        Ok(res) => {
-                                            match res.error_for_status() {
-                                                Ok(ok_res) => {
-                                                    let name = ok_res.text().await.unwrap_or("<无法解析的名称>".to_string());
-                                                    let msg = format!("词库可用！词库名称：{}", name);
-                                                    self.broadcast(PlayerResp::Notice { msg }).await;
-                                                    self.config.lexicon = Lexicon::Server(lexcodes);
+                                    PlayerReq::LexiconService (lexcodes) => {
+                                        let msg = format!("{} 加载了服务器词库, 正在获取词库信息", self.get_name(idx));
+                                        self.broadcast(PlayerResp::Notice{msg}).await;
+                                        match reqwest::get(format!("http://{}/name/{}", LEX_SERVER, lexcodes)).await {
+                                            Ok(res) => {
+                                                match res.error_for_status() {
+                                                    Ok(ok_res) => {
+                                                        let name = ok_res.text().await.unwrap_or("<无法解析的名称>".to_string());
+                                                        let msg = format!("词库可用！词库名称：{}", name);
+                                                        self.broadcast(PlayerResp::Notice { msg }).await;
+                                                        self.config.lexicon = Lexicon::Server(lexcodes);
+                                                    }
+                                                    Err(err) => {
+                                                        let msg = format!("词库响应 {}， 请检查你的词库码是否正确，不过也可能是词库挂了", err.status().unwrap_or_default());
+                                                        self.broadcast(PlayerResp::Warn { msg }).await;
+                                                    }
                                                 }
-                                                Err(err) => {
-                                                    let msg = format!("词库响应 {}， 请检查你的词库码是否正确，不过也可能是词库挂了", err.status().unwrap_or_default());
-                                                    self.broadcast(PlayerResp::Warn { msg }).await;
-                                                }
-                                            }
-                                        },
-                                        Err(err) => {
-                                            let msg = format!("怎么会是呢，词库没反应啊！错误消息：{}", err);
-                                            self.broadcast(PlayerResp::Warn { msg }).await;
-                                        },
-                                    }
-                                },
-                                PlayerReq::LexiconGit (path) => {
-                                    // for example: https://github.com/4t145/repo/blob/master/dirname/filename.json
-                                    let msg = format!("{} 加载了Github词库, 正在获取词库信息", self.get_name(idx));
-                                    self.broadcast(PlayerResp::Notice{msg}).await;
-                                    if let Some(caps) = github_re.captures(path.as_str()) {
-                                        if caps.len() == 4 {
-                                            let user = caps.get(1).unwrap().as_str();
-                                            let repo = caps.get(2).unwrap().as_str();
-                                            let file = caps.get(3).unwrap().as_str();
-                                            let resource = format!("https://raw.githubusercontent.com/{}/{}/{}", user, repo, file);
-                                            let msg = format!("尝试下载资源 {}", resource);
-                                            self.broadcast(PlayerResp::Notice{msg}).await;
-                                            match reqwest::get(resource).await {
-                                                Ok(res) => {
-                                                    match res.error_for_status() {
-                                                        Ok(ok_res) => {
-                                                            self.broadcast(PlayerResp::Notice{msg: "尝试解码".to_string()}).await;
-                                                            if let Ok(bytes) = ok_res.bytes().await {
-                                                                if let Ok(lexicon_data) = serde_json::from_slice::<LexiconData>(&bytes) {
-                                                                    let msg = format!("已下载词库！名称: {}， 容量{}", lexicon_data.name, lexicon_data.lexicon.len());
-                                                                    self.broadcast(PlayerResp::Notice{msg}).await;
-                                                                    self.config.lexicon = Lexicon::Git(lexicon_data)
+                                            },
+                                            Err(err) => {
+                                                let msg = format!("怎么会是呢，词库没反应啊！错误消息：{}", err);
+                                                self.broadcast(PlayerResp::Warn { msg }).await;
+                                            },
+                                        }
+                                    },
+                                    PlayerReq::LexiconGit (path) => {
+                                        // for example: https://github.com/4t145/repo/blob/master/dirname/filename.json
+                                        let msg = format!("{} 加载了Github词库, 正在获取词库信息", self.get_name(idx));
+                                        self.broadcast(PlayerResp::Notice{msg}).await;
+                                        if let Some(caps) = github_re.captures(path.as_str()) {
+                                            if caps.len() == 4 {
+                                                let user = caps.get(1).unwrap().as_str();
+                                                let repo = caps.get(2).unwrap().as_str();
+                                                let file = caps.get(3).unwrap().as_str();
+                                                let resource = format!("https://raw.githubusercontent.com/{}/{}/{}", user, repo, file);
+                                                let msg = format!("尝试下载资源 {}", resource);
+                                                self.broadcast(PlayerResp::Notice{msg}).await;
+                                                match reqwest::get(resource).await {
+                                                    Ok(res) => {
+                                                        match res.error_for_status() {
+                                                            Ok(ok_res) => {
+                                                                self.broadcast(PlayerResp::Notice{msg: "尝试解码".to_string()}).await;
+                                                                if let Ok(bytes) = ok_res.bytes().await {
+                                                                    if let Ok(lexicon_data) = serde_json::from_slice::<LexiconData>(&bytes) {
+                                                                        let msg = format!("已下载词库！名称: {}， 容量{}", lexicon_data.name, lexicon_data.lexicon.len());
+                                                                        self.broadcast(PlayerResp::Notice{msg}).await;
+                                                                        self.config.lexicon = Lexicon::Git(lexicon_data)
+                                                                    } else {
+                                                                        let msg = format!("不合法的词库文件，请检查词库是否具有各自段");
+                                                                        self.broadcast(PlayerResp::Warn{msg}).await;
+                                                                    }
                                                                 } else {
-                                                                    let msg = format!("不合法的词库文件，请检查词库是否具有各自段");
+                                                                    let msg = format!("无法解码，请检查词库格式/地址");
                                                                     self.broadcast(PlayerResp::Warn{msg}).await;
                                                                 }
-                                                            } else {
-                                                                let msg = format!("无法解码，请检查词库格式/地址");
-                                                                self.broadcast(PlayerResp::Warn{msg}).await;
+                                                            }
+                                                            Err(err) => {
+                                                                let msg = format!("网络错误， 状态码：{}", err.status().unwrap_or_default());
+                                                                self.broadcast(PlayerResp::Warn { msg }).await;
                                                             }
                                                         }
-                                                        Err(err) => {
-                                                            let msg = format!("网络错误， 状态码：{}", err.status().unwrap_or_default());
-                                                            self.broadcast(PlayerResp::Warn { msg }).await;
-                                                        }
-                                                    }
-                                                },
-                                                Err(err) => {
-                                                    let msg = format!("网络错误：{}", err);
-                                                    self.broadcast(PlayerResp::Warn { msg }).await;
-                                                },
+                                                    },
+                                                    Err(err) => {
+                                                        let msg = format!("网络错误：{}", err);
+                                                        self.broadcast(PlayerResp::Warn { msg }).await;
+                                                    },
+                                                }
+                                            } else {
+                                                let msg = format!("地址只对了一半捏");
+                                                self.broadcast(PlayerResp::Warn { msg }).await;
                                             }
                                         } else {
-                                            let msg = format!("地址只对了一半捏");
+                                            let msg = format!("地址似乎不太对捏");
                                             self.broadcast(PlayerResp::Warn { msg }).await;
                                         }
-                                    } else {
-                                        let msg = format!("地址似乎不太对捏");
-                                        self.broadcast(PlayerResp::Warn { msg }).await;
-                                    }
 
-                                },
-                                _ => {}
+                                    },
+                                    _ => {}
+                                }
                             }
+                            RoomReq::Timer(_) => {},
+                            RoomReq::CountDown(_) => {},
+                            RoomReq::ObserverReq(_, _) => {},
+                            RoomReq::PlayerLogin{ws_stream} => {
+                                self.login_player(ws_stream).await.unwrap_or_default();
+                            },
+                            RoomReq::ObserverLogin { addr, name, ws_stream } => {
+                                self.login_observer(ws_stream, name, addr).await;
+                            },
+                            RoomReq::PlayerLogout(idx) => {self.logout(idx).await;},
+                            RoomReq::ObserverLogout(name) => {self.logout_observer(&name)},
                         }
-                        RoomReq::Timer(_) => {},
-                        RoomReq::CountDown(_) => {},
-                        RoomReq::ObserverReq(_, _) => {},
-                        RoomReq::PlayerLogin{ws_stream} => {
-                            self.login_player(ws_stream).await.unwrap_or_default();
-                        },
-                        RoomReq::ObserverLogin { addr, name, ws_stream } => {
-                            self.login_observer(ws_stream, name, addr).await;
-                        },
-                        RoomReq::PlayerLogout(idx) => {self.logout(idx).await;},
-                        RoomReq::ObserverLogout(name) => {self.logout_observer(&name)},
                     }
-                }
-            },
-            Stage::Ready => {
-                self.state.stage = if let Some(first) = self.get_next_drawer(None) {
-                    self.broadcast( PlayerResp::TurnStart(first as u8)).await;
-                    self.state.topic = self.config.lexicon.next_word().await.unwrap_or_default();
-                    self.send(first, PlayerResp::Topic {
-                        topic_word: self.state.topic.clone()
-                    }).await;
-                    timer = Some(self.set_timer(self.config.round_time, TimerType::Draw));
-                    timepoint = 0;
-                    Stage::Drawing(first)
-                } else {
-                    Stage::Unready
-                };
-                // self.feed(self.get_room_states()).await;
-            },
-            Stage::Drawing(drawer_idx) => {
-                let mut timesup = false;
-                if let Some(req) = self.rm_rx.recv().await {
-                    match req {
-                        RoomReq::PlayerReq(idx, req) => {
-                            match req {
-                                PlayerReq::Chat {msg} => {
-                                    if idx != drawer_idx {
-                                        let sender_name = self.players[idx].as_ref().unwrap().name.clone();
-                                        // logic when sb. get the answer
-                                        if self.check_answer(&msg) {
-                                            if let Some(ref mut player) = self.players[idx] {
-                                                player.set_right(drawer_idx);
-                                                player.timepoint += timepoint;
-                                                self.send(idx, PlayerResp::Notice {msg: "正确答案！".to_string()}).await;
-                                                self.broadcast_except(
-                                                    PlayerResp::Notice {msg: format!("{} 已经猜到了正确答案!", sender_name)}, 
-                                                idx).await;
+                },
+                Stage::Ready => {
+                    self.state.stage = if let Some(first) = self.get_next_drawer(None) {
+                        self.broadcast( PlayerResp::TurnStart(first as u8)).await;
+                        self.state.topic = self.config.lexicon.next_word().await.unwrap_or_default();
+                        self.send(first, PlayerResp::Topic {
+                            topic_word: self.state.topic.clone()
+                        }).await;
+                        timer = Some(self.set_timer(self.config.round_time, TimerType::Draw));
+                        timepoint = 0;
+                        Stage::Drawing(first)
+                    } else {
+                        Stage::Unready
+                    };
+                    // self.feed(self.get_room_states()).await;
+                },
+                Stage::Drawing(drawer_idx) => {
+                    let mut timesup = false;
+                    if let Some(req) = self.rm_rx.recv().await {
+                        match req {
+                            RoomReq::PlayerReq(idx, req) => {
+                                match req {
+                                    PlayerReq::Chat {msg} => {
+                                        if idx != drawer_idx {
+                                            let sender_name = self.players[idx].as_ref().unwrap().name.clone();
+                                            // logic when sb. get the answer
+                                            if self.check_answer(&msg) {
+                                                if let Some(ref mut player) = self.players[idx] {
+                                                    player.set_right(drawer_idx);
+                                                    player.timepoint += timepoint;
+                                                    self.send(idx, PlayerResp::Notice {msg: "正确答案！".to_string()}).await;
+                                                    self.broadcast_except(
+                                                        PlayerResp::Notice {msg: format!("{} 已经猜到了正确答案!", sender_name)}, 
+                                                    idx).await;
+                                                }
+                                                self.players[idx].as_mut()
+                                                .and_then(|p|Some(p.add_draw_point()))
+                                                .unwrap_or_default();
+                                            } else {
+                                                self.broadcast_except(PlayerResp::Chat {sender: sender_name, msg: msg}, idx).await;
                                             }
-                                            self.players[idx].as_mut()
-                                            .and_then(|p|Some(p.add_draw_point()))
-                                            .unwrap_or_default();
-                                        } else {
-                                            self.broadcast_except(PlayerResp::Chat {sender: sender_name, msg: msg}, idx).await;
                                         }
-                                    }
-                                },
-                                protocol::PlayerRequest::Chunk { bin } => {
-                                    if drawer_idx == idx {
-                                        let req = PlayerResp::Chunk {bin};
-                                        self.broadcast_except(req, idx).await;
-                                    }
-                                },
-                                _ => {}
+                                    },
+                                    protocol::PlayerRequest::Chunk { bin } => {
+                                        if drawer_idx == idx {
+                                            let req = PlayerResp::Chunk {bin};
+                                            self.broadcast_except(req, idx).await;
+                                        }
+                                    },
+                                    _ => {}
+                                }
                             }
+                            RoomReq::Timer(TimerType::Draw) => {timesup = true;},
+                            RoomReq::CountDown(rest) => {
+                                self.broadcast( PlayerResp::CountDown(rest as u8)).await;
+                                timepoint += 1;
+                            },
+                            RoomReq::ObserverLogin { addr, name, ws_stream } => {
+                                self.login_observer(ws_stream, name, addr).await;
+                            },
+                            RoomReq::PlayerLogout(idx) => {self.logout(idx).await;},
+                            RoomReq::ObserverLogout(name) => {self.logout_observer(&name)},
+                            _ => {}
                         }
-                        RoomReq::Timer(TimerType::Draw) => {timesup = true;},
-                        RoomReq::CountDown(rest) => {
-                            self.broadcast( PlayerResp::CountDown(rest as u8)).await;
-                            timepoint += 1;
-                        },
-                        RoomReq::ObserverLogin { addr, name, ws_stream } => {
-                            self.login_observer(ws_stream, name, addr).await;
-                        },
-                        RoomReq::PlayerLogout(idx) => {self.logout(idx).await;},
-                        RoomReq::ObserverLogout(name) => {self.logout_observer(&name)},
-                        _ => {}
+                    }
+                    if self.every_one_right(drawer_idx) || timesup ||self.state.player_count==0{
+                        self.broadcast(PlayerResp::TurnEnd).await;
+                        self.broadcast_except(PlayerResp::Poll, drawer_idx).await;
+                        let _ = timer.unwrap().send(());
+                        timer = Some(self.set_timer(5, TimerType::Mark));
+                        timepoint = 0;
+                        self.state.stage = Stage::Marking(drawer_idx);
+                        self.broadcast(PlayerResp::MarkStart).await;
+                    }
+                },
+                Stage::Marking(drawer_idx) => {
+                    if let Some(req) = self.rm_rx.recv().await {
+                        match req {
+                            RoomReq::PlayerReq(idx, req) => {
+                                match req {
+                                    PlayerReq::Chat {msg} => {
+                                        let sender_name = self.players[idx].as_ref().unwrap().name.clone();
+                                        self.broadcast_except(PlayerResp::Chat {sender: sender_name, msg: msg}, idx).await;
+                                    },
+                                    PlayerReq::Mark{score} => {
+                                        // <temp!
+                                        self.broadcast(PlayerResp::Notice {
+                                            msg: format!("{} 对此的评价是 {}", 
+                                                self.players[idx].as_ref().unwrap().get_name(), 
+                                                match score {
+                                                    -1 => "差评如潮",
+                                                    0 => "褒贬不一",
+                                                    1 => "好评如潮",
+                                                    _ => "好评如潮",
+                                                }
+                                            )
+                                        }, ).await;
+                                        // !temp>
+                                        if let Some(ref mut player) = self.players[drawer_idx] { player.mark(score); };
+                                        self.broadcast(PlayerResp::PlayerStates(self.player_states())).await;
+                                    },
+                                    _ => {}
+                                }
+                            },
+                            RoomReq::Timer(TimerType::Mark) => {
+                                self.broadcast( PlayerResp::MarkEnd).await;
+                                self.state.stage = if let Some(next) = self.get_next_drawer(Some(drawer_idx)) {
+                                    self.broadcast( PlayerResp::TurnStart(next as u8)).await;
+                                    self.state.topic = self.config.lexicon.next_word().await.unwrap_or_default();
+                                    self.send(next, PlayerResp::Topic {
+                                        topic_word: self.state.topic.clone()
+                                    }).await;
+                                    timer = Some(self.set_timer(self.config.round_time, TimerType::Draw));
+                                    Stage::Drawing(next)
+                                } else {
+                                    Stage::Over
+                                };
+                            },
+                            RoomReq::CountDown(rest) => {
+                                self.broadcast( PlayerResp::CountDown(rest as u8)).await;
+                            },
+                            RoomReq::PlayerLogout(idx) => {
+                                self.logout(idx).await;
+                            },
+                            RoomReq::ObserverLogout(name) => {self.logout_observer(&name)},
+                            _ => {}
+                        }
                     }
                 }
-                if self.every_one_right(drawer_idx) || timesup {
-                    self.broadcast(PlayerResp::TurnEnd).await;
-                    self.broadcast_except(PlayerResp::Poll, drawer_idx).await;
-                    let _ = timer.unwrap().send(());
-                    timer = Some(self.set_timer(5, TimerType::Mark));
-                    timepoint = 0;
-                    self.state.stage = Stage::Marking(drawer_idx);
-                    self.broadcast(PlayerResp::MarkStart).await;
-                }
-            },
-            Stage::Marking(drawer_idx) => {
-                if let Some(req) = self.rm_rx.recv().await {
-                    match req {
-                        RoomReq::PlayerReq(idx, req) => {
-                            match req {
-                                PlayerReq::Chat {msg} => {
-                                    let sender_name = self.players[idx].as_ref().unwrap().name.clone();
-                                    self.broadcast_except(PlayerResp::Chat {sender: sender_name, msg: msg}, idx).await;
-                                },
-                                PlayerReq::Mark{score} => {
-                                    // <temp!
-                                    self.broadcast(PlayerResp::Notice {
-                                        msg: format!("{} 对此的评价是 {}", 
-                                            self.players[idx].as_ref().unwrap().get_name(), 
-                                            match score {
-                                                -1 => "差评如潮",
-                                                0 => "褒贬不一",
-                                                1 => "好评如潮",
-                                                _ => "好评如潮",
-                                            }
-                                        )
-                                    }, ).await;
-                                    // !temp>
-                                    if let Some(ref mut player) = self.players[drawer_idx] { player.mark(score); };
-                                },
-                                _ => {}
-                            }
-                        },
-                        RoomReq::Timer(TimerType::Mark) => {
-                            self.broadcast( PlayerResp::MarkEnd).await;
-                            self.state.stage = if let Some(next) = self.get_next_drawer(Some(drawer_idx)) {
-                                self.broadcast( PlayerResp::TurnStart(next as u8)).await;
-                                self.state.topic = self.config.lexicon.next_word().await.unwrap_or_default();
-                                self.send(next, PlayerResp::Topic {
-                                    topic_word: self.state.topic.clone()
-                                }).await;
-                                timer = Some(self.set_timer(self.config.round_time, TimerType::Draw));
-                                Stage::Drawing(next)
-                            } else {
-                                Stage::Over
-                            };
-                        },
-                        RoomReq::CountDown(rest) => {
-                            self.broadcast( PlayerResp::CountDown(rest as u8)).await;
-                        },
-                        RoomReq::PlayerLogout(idx) => {
-                            self.logout(idx).await;
-                        },
-                        RoomReq::ObserverLogout(name) => {self.logout_observer(&name)},
-                        _ => {}
-                    }
-                }
-            }
-            Stage::Over => {
-                self.broadcast(PlayerResp::Notice {msg: "本轮结束".to_string()}).await;
-                self.broadcast(PlayerResp::GameEnd).await;
-                self.reset_all();
-                self.broadcast(PlayerResp::PlayerStates(self.player_states())).await;
-                self.state.stage = Stage::Unready;
-                self.feed(self.get_room_states()).await;
-            }
-        }}
-        
+                Stage::Over => {
+                    self.broadcast(PlayerResp::GameEnd).await;
+                    self.reset_all();
+                    self.broadcast(PlayerResp::PlayerStates(self.player_states())).await;
+                    self.state.stage = Stage::Unready;
+                    self.feed(self.get_room_states()).await;
+                },
 
+                // unreachable by now
+                Stage::_Recover => {
+                    self._abort();
+                    self.reset_all();
+                    self.state.stage = Stage::Unready;
+                    unreachable!();
+                }
+            }
+        }
     }
 
 
@@ -423,13 +447,6 @@ impl Room {
             ob.send(resp.clone()).await;
         }
     }
-
-    // fn renew_observer(&mut self) {
-    //     self.observers = self.observers
-    //     .iter()
-    //     .filter(|ob|{!ob.ws_ch_tx.is_closed()})
-    //     .map(|ob|{ob.clone()}).collect();
-    // }
 
     fn set_timer(&self, secs:usize, timer_type: TimerType) -> oneshot::Sender<()> {
         let (tx, mut rx) = oneshot::channel::<()>();

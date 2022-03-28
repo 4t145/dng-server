@@ -78,19 +78,25 @@ async fn room_jump_handle(hexcode:String, room_map:RoomMap) -> Result<Json, reje
     Err(reject())
 }
 
-async fn room_state_handle(room_id: String, manifest_data: Arc<RwLock<Manifest>>) -> Result<Json, reject::Rejection> {
+async fn room_state_handle(room_ids: String, manifest_data: Arc<RwLock<Manifest>>) -> Result<Json, reject::Rejection> {
+    let room_id_list = room_ids.split('|');
+    let mut reply = vec![];
     {
         let manifest_unlocked = manifest_data.read().await;
-        if let Some(room) = manifest_unlocked.rooms.get(&room_id) {
-            if let Some(ref conn) = room.connection {
-                let state = conn.watcher.borrow().clone();
-                let json_reply = warp::reply::json(&state);
-                return Ok(json_reply);
+        for room_id in room_id_list {
+            if let Some(room) = manifest_unlocked.rooms.get(room_id) {
+                if let Some(ref conn) = room.connection {
+                    let state = conn.watcher.borrow().clone();
+                    reply.push(state);
+                    continue;
+                }
             }
+            // fallback
+            reply.push(None);
         }
     }
-
-    Err(reject())
+    let json_reply = warp::reply::json(&reply);
+    return Ok(json_reply);
 }
 
 async fn manifest_handle(manifest_resp: ManifestResp) -> Result<Json, reject::Rejection> {

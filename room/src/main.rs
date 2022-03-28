@@ -10,37 +10,39 @@ mod room;
 mod player;
 mod observer;
 
-/// # 协程
-/// 1. 主：负责逻辑
-/// 2. 推流：负责通讯
-/// 
+
 use tokio::net::{TcpListener};
-// use tokio::sync::{oneshot, mpsc};
+use tokio::task::JoinSet;
 use crate::logger::log;
 use crate::consts::*;
-// use types::*;
-// use std::env;
+
+
+
+
 #[tokio::main]
 async fn main() {
 
     console_subscriber::init();
-    let mut handles = vec![];
-
+    let mut handles = JoinSet::new();
     for port in PORT_FROM..PORT_TO {
-        let handle = tokio::spawn(
-            run_on_port(port)
-        );
-        handles.push(handle);
+        handles.spawn(run_on_port(port));
     }
-
-    for h in handles {
-        let s = tokio::join!(h).0.unwrap_or(Ok(()));
-        s.unwrap_or_default();
-    }
+    
+    loop {
+        match handles.join_one().await {
+            Ok(res) => {
+                // 
+                log(format!("{:?}", res));
+            },
+            Err(e) => {
+                log(format!("join error {:?}", e));
+            },
+        }
+        if handles.is_empty() {break};
+    } 
 }
 
-
-async fn run_on_port(port: u16) -> Result<(), ()> {
+async fn run_on_port(port: u16) -> Result<u16, ()> {
     let try_socket = TcpListener::bind(format!("0.0.0.0:{}", port)).await;
     let listener = try_socket.expect("Failed to bind");
     log(format!("listening on port {}", port));
@@ -48,7 +50,7 @@ async fn run_on_port(port: u16) -> Result<(), ()> {
     let mut room = room::Room::new(Some(name));
     let token_watcher = room.subscribe_token();
     let room_tx = room.get_tx();
-    let _handle_room = tokio::spawn(async move {room.run().await});
+    let handle_room = tokio::spawn(async move {room.run().await});
 
     while let Ok((stream, _)) = listener.accept().await {
         let room_tx_clone = room_tx.clone();
@@ -76,7 +78,8 @@ async fn run_on_port(port: u16) -> Result<(), ()> {
         });
     }
 
-    Ok(())
+    handle_room.await.unwrap_or_default();
+    Ok(port)
 }
 
 use tokio_tungstenite::tungstenite::handshake::server::Request as HsReq;

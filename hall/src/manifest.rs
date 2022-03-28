@@ -32,7 +32,6 @@ pub struct Manifest {
 pub struct ManifestRespItem {
     id: String,
     url: String,
-    name: Option<String>
 }
 
 #[derive(Default, Clone, Serialize)]
@@ -44,7 +43,6 @@ impl ManifestResp {
             v.push(ManifestRespItem {
                 id: id.clone(),
                 url: room.url.clone(),
-                name: room.name.clone(),
             })
         }
         ManifestResp(v)

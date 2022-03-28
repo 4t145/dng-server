@@ -4,7 +4,10 @@ pub enum Stage {
     Ready,
     Drawing(usize),
     Marking(usize),
-    Over
+    Over,
+
+    
+    _Recover
 }
 
 pub struct State {
