@@ -31,7 +31,6 @@ async fn main() {
     loop {
         match handles.join_one().await {
             Ok(res) => {
-                // 
                 log(format!("{:?}", res));
             },
             Err(e) => {
@@ -42,6 +41,18 @@ async fn main() {
     } 
 }
 
+
+#[derive(Debug)]
+enum ErrorKind {
+    Io(std::io::Error),
+    Handshake(tokio_tungstenite::tungstenite::Error)
+}
+
+impl Drop for ErrorKind {
+    fn drop(&mut self) {
+        log(format!("error {:?}", self))
+    }
+}
 async fn run_on_port(port: u16) -> Result<u16, ()> {
     let try_socket = TcpListener::bind(format!("0.0.0.0:{}", port)).await;
     let listener = try_socket.expect("Failed to bind");
@@ -57,24 +68,27 @@ async fn run_on_port(port: u16) -> Result<u16, ()> {
         let token_watcher_clone = token_watcher.clone();
         tokio::spawn(async move {
             let (login_res_tx, login_res_rx) = tokio::sync::oneshot::channel::<LoginType>();
-            let addr = stream.peer_addr().expect("connected streams should have a peer address");
+            let addr = stream.peer_addr()
+                .map_err(ErrorKind::Io)?;
             log(format!("new connection on: {}", addr));
             let ws_stream = tokio_tungstenite::accept_hdr_async(stream, Callback{
                 login_result: login_res_tx,
                 token_reciever: token_watcher_clone
             })
-            .await
-            .expect("Error during the websocket handshake occurred");
+            .await.map_err(ErrorKind::Handshake)?;
+            
             
             match login_res_rx.await {
                 Ok(LoginType::Player) => {
-                    room_tx_clone.send(room::RoomReq::PlayerLogin{ws_stream}).await.unwrap();
+                    room_tx_clone.send(room::RoomReq::PlayerLogin{ws_stream}).await.unwrap_or_default();
                 }
                 Ok(LoginType::Observer(name)) => {
-                    room_tx_clone.send(room::RoomReq::ObserverLogin { ws_stream, addr: addr.to_string(), name}).await.unwrap();
+                    room_tx_clone.send(room::RoomReq::ObserverLogin { ws_stream, addr: addr.to_string(), name}).await.unwrap_or_default();
                 },
                 _ => {}
             }
+
+            Result::<(), ErrorKind>::Ok(())
         });
     }
 

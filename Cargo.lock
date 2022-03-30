@@ -601,6 +601,7 @@ dependencies = [
  "protocol",
  "serde",
  "serde_json",
+ "sqlx",
  "tokio",
  "tokio-tungstenite 0.17.1",
  "warp",
@@ -1310,7 +1311,6 @@ version = "0.1.0"
 dependencies = [
  "bincode",
  "serde",
- "serde_json",
  "tokio-tungstenite 0.17.1",
 ]
 

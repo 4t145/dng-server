@@ -4,9 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-sqlx = { workspace = true, features = [ "sqlite", "runtime-tokio-rustls" ] }
-clap = { workspace = true, features = ["derive"] }
-# hyper = {version = "0.14.17", features = ["full"]}
-warp = {workspace = true}
-tokio = { workspace = true, features = ["full"] }
-async-trait = {workspace = true}
+sqlx = { version = "0.5", features = [ "sqlite", "runtime-tokio-rustls" ] }
+clap = { version = "3.1.6", features = ["derive"] }
+warp = "0.3"
+tokio = { version = "1.17.0", features = ["full", "tracing"] }
+
+async-trait = "*"

@@ -2,3 +2,5 @@
 
 *.db-shm
 *.db-wal
+
+*.sh

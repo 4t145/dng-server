@@ -20,7 +20,7 @@ pub struct RoomConnection {
 
 pub struct RoomItem {
     pub(crate) url: String,
-    pub(crate) name: Option<String>,
+    pub(crate) _name: Option<String>,
     pub(crate) connection: Option<RoomConnection>,
 }
 
@@ -111,7 +111,7 @@ impl Manifest {
 
             rooms.insert(key, RoomItem {
                 url,
-                name: None,
+                _name: None,
                 connection: None,
             });
 
