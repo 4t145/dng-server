@@ -125,12 +125,15 @@ impl Manifest {
 
 
     pub async fn ob_all(&mut self) {
-
+        let mut ok = 0;
+        let mut count = 0;
         for (_id, room) in self.rooms.iter_mut() {
+            count += 1;
             if let Ok(_) = room.ob().await {
-
+                ok+=1;
             }
         }
+        println!("success {}/{}", ok, count);
     }
 
     pub fn rwlock<'l>(self) -> Arc<RwLock<Self>> {
