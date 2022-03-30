@@ -21,8 +21,9 @@ use crate::consts::*;
 
 #[tokio::main]
 async fn main() {
-
     console_subscriber::init();
+
+    
     let mut handles = JoinSet::new();
     for port in PORT_FROM..PORT_TO {
         handles.spawn(run_on_port(port));
