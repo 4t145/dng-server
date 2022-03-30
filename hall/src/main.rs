@@ -79,7 +79,7 @@ async fn room_jump_handle(hexcode:String, room_map:RoomMap) -> Result<Json, reje
 }
 
 async fn room_state_handle(room_ids: String, manifest_data: Arc<RwLock<Manifest>>) -> Result<Json, reject::Rejection> {
-    let depercentage = room_ids.replace("%7c", "|");
+    let depercentage = room_ids.replace("%7C", "|");
     let room_id_list = depercentage.split('|');
     let mut reply = vec![];
     {
