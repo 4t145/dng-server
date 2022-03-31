@@ -58,6 +58,7 @@ impl Observer {
                         _ => {}
                     }
                 }
+                
             }
         );
 
