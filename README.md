@@ -1,4 +1,6 @@
 # dng-server
+关于游戏详细的信息在[前端仓库](https://github.com/4t145/dng-yew)
+
 你画我猜的相关服务器
 
 ## 编译
