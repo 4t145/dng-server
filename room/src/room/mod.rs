@@ -150,110 +150,113 @@ impl Room {
                     if let Some(req) = self.rm_rx.recv().await {
                         match req {
                             RoomReq::PlayerReq(idx, req) => {
-                                match req {
-                                    PlayerReq::SetName { name}  => {
-                                        self.players[idx].as_mut().unwrap().set_name(name);
-                                        self.broadcast(PlayerResp::PlayerStates(self.player_states())).await;
-                                    },
-                                    PlayerReq::Chat {msg} => {
-                                        let sender_name = self.players[idx].as_ref().and_then(|p|Some(p.get_name())).unwrap_or_default();
-                                        self.broadcast_except(PlayerResp::Chat {sender: sender_name, msg: msg}, idx).await;
-                                    },
-                                    PlayerReq::ImReady  => {
-                                        self.players[idx].as_mut().unwrap().ready();
-                                        self.broadcast(PlayerResp::PlayerStates(self.player_states())).await;
-                                        if self.every_one_ready() {
-                                            self.state.stage = Stage::Ready;
-                                            self.broadcast(PlayerResp::GameStart).await;
-                                            self.feed(self.get_room_states()).await;
+                                if let Some(p_req) = self.players[idx].as_mut() { 
+                                    match req {
+                                        PlayerReq::SetName { name}  => {
+                                            p_req.set_name(name);
+                                            self.broadcast(PlayerResp::PlayerStates(self.player_states())).await;
+                                        },
+                                        PlayerReq::Chat {msg} => {
+                                            let sender_name = p_req.get_name();
+                                            self.broadcast_except(PlayerResp::Chat {sender: sender_name, msg: msg}, idx).await;
+                                        },
+                                        PlayerReq::ImReady  => {
+                                            p_req.ready();
+                                            self.broadcast(PlayerResp::PlayerStates(self.player_states())).await;
+                                            if self.every_one_ready() {
+                                                self.state.stage = Stage::Ready;
+                                                self.broadcast(PlayerResp::GameStart).await;
+                                                self.feed(self.get_room_states()).await;
+                                            }
+                                        },
+                                        PlayerReq::ImUnready => {
+                                            p_req.unready();
+                                            self.broadcast(PlayerResp::PlayerStates(self.player_states())).await;
+                                        },
+                                        PlayerReq::Lexicon (lexicon)=> {
+                                            self.config.lexicon = Lexicon::Upload(lexicon);
+                                            let msg = format!("{} 上传了词库", self.get_name(idx));
+                                            self.broadcast(PlayerResp::Notice{msg}).await;
                                         }
-                                    },
-                                    PlayerReq::ImUnready => {
-                                        self.players[idx].as_mut().unwrap().unready();
-                                        self.broadcast(PlayerResp::PlayerStates(self.player_states())).await;
-                                    },
-                                    PlayerReq::Lexicon (lexicon)=> {
-                                        self.config.lexicon = Lexicon::Upload(lexicon);
-                                        let msg = format!("{} 上传了词库", self.get_name(idx));
-                                        self.broadcast(PlayerResp::Notice{msg}).await;
-                                    }
-                                    PlayerReq::LexiconService (lexcodes) => {
-                                        let msg = format!("{} 加载了服务器词库, 正在获取词库信息", self.get_name(idx));
-                                        self.broadcast(PlayerResp::Notice{msg}).await;
-                                        match reqwest::get(format!("http://{}/name/{}", LEX_SERVER, lexcodes)).await {
-                                            Ok(res) => {
-                                                match res.error_for_status() {
-                                                    Ok(ok_res) => {
-                                                        let name = ok_res.text().await.unwrap_or("<无法解析的名称>".to_string());
-                                                        let msg = format!("词库可用！词库名称：{}", name);
-                                                        self.broadcast(PlayerResp::Notice { msg }).await;
-                                                        self.config.lexicon = Lexicon::Server(lexcodes);
+                                        PlayerReq::LexiconService (lexcodes) => {
+                                            let msg = format!("{} 加载了服务器词库, 正在获取词库信息", self.get_name(idx));
+                                            self.broadcast(PlayerResp::Notice{msg}).await;
+                                            match reqwest::get(format!("http://{}/name/{}", LEX_SERVER, lexcodes)).await {
+                                                Ok(res) => {
+                                                    match res.error_for_status() {
+                                                        Ok(ok_res) => {
+                                                            let name = ok_res.text().await.unwrap_or("<无法解析的名称>".to_string());
+                                                            let msg = format!("词库可用！词库名称：{}", name);
+                                                            self.broadcast(PlayerResp::Notice { msg }).await;
+                                                            self.config.lexicon = Lexicon::Server(lexcodes);
+                                                        }
+                                                        Err(err) => {
+                                                            let msg = format!("词库响应 {}， 请检查你的词库码是否正确，不过也可能是词库挂了", err.status().unwrap_or_default());
+                                                            self.broadcast(PlayerResp::Warn { msg }).await;
+                                                        }
                                                     }
-                                                    Err(err) => {
-                                                        let msg = format!("词库响应 {}， 请检查你的词库码是否正确，不过也可能是词库挂了", err.status().unwrap_or_default());
-                                                        self.broadcast(PlayerResp::Warn { msg }).await;
-                                                    }
-                                                }
-                                            },
-                                            Err(err) => {
-                                                let msg = format!("怎么会是呢，词库没反应啊！错误消息：{}", err);
-                                                self.broadcast(PlayerResp::Warn { msg }).await;
-                                            },
-                                        }
-                                    },
-                                    PlayerReq::LexiconGit (path) => {
-                                        // for example: https://github.com/4t145/repo/blob/master/dirname/filename.json
-                                        let msg = format!("{} 加载了Github词库, 正在获取词库信息", self.get_name(idx));
-                                        self.broadcast(PlayerResp::Notice{msg}).await;
-                                        if let Some(caps) = github_re.captures(path.as_str()) {
-                                            if caps.len() == 4 {
-                                                let user = caps.get(1).unwrap().as_str();
-                                                let repo = caps.get(2).unwrap().as_str();
-                                                let file = caps.get(3).unwrap().as_str();
-                                                let resource = format!("https://raw.githubusercontent.com/{}/{}/{}", user, repo, file);
-                                                let msg = format!("尝试下载资源 {}", resource);
-                                                self.broadcast(PlayerResp::Notice{msg}).await;
-                                                match reqwest::get(resource).await {
-                                                    Ok(res) => {
-                                                        match res.error_for_status() {
-                                                            Ok(ok_res) => {
-                                                                self.broadcast(PlayerResp::Notice{msg: "尝试解码".to_string()}).await;
-                                                                if let Ok(bytes) = ok_res.bytes().await {
-                                                                    if let Ok(lexicon_data) = serde_json::from_slice::<LexiconData>(&bytes) {
-                                                                        let msg = format!("已下载词库！名称: {}， 容量{}", lexicon_data.name, lexicon_data.lexicon.len());
-                                                                        self.broadcast(PlayerResp::Notice{msg}).await;
-                                                                        self.config.lexicon = Lexicon::Git(lexicon_data)
+                                                },
+                                                Err(err) => {
+                                                    let msg = format!("怎么会是呢，词库没反应啊！错误消息：{}", err);
+                                                    self.broadcast(PlayerResp::Warn { msg }).await;
+                                                },
+                                            }
+                                        },
+                                        PlayerReq::LexiconGit (path) => {
+                                            // for example: https://github.com/4t145/repo/blob/master/dirname/filename.json
+                                            let msg = format!("{} 加载了Github词库, 正在获取词库信息", self.get_name(idx));
+                                            self.broadcast(PlayerResp::Notice{msg}).await;
+                                            if let Some(caps) = github_re.captures(path.as_str()) {
+                                                if caps.len() == 4 {
+                                                    let user = caps.get(1).unwrap().as_str();
+                                                    let repo = caps.get(2).unwrap().as_str();
+                                                    let file = caps.get(3).unwrap().as_str();
+                                                    let resource = format!("https://raw.githubusercontent.com/{}/{}/{}", user, repo, file);
+                                                    let msg = format!("尝试下载资源 {}", resource);
+                                                    self.broadcast(PlayerResp::Notice{msg}).await;
+                                                    match reqwest::get(resource).await {
+                                                        Ok(res) => {
+                                                            match res.error_for_status() {
+                                                                Ok(ok_res) => {
+                                                                    self.broadcast(PlayerResp::Notice{msg: "尝试解码".to_string()}).await;
+                                                                    if let Ok(bytes) = ok_res.bytes().await {
+                                                                        if let Ok(lexicon_data) = serde_json::from_slice::<LexiconData>(&bytes) {
+                                                                            let msg = format!("已下载词库！名称: {}， 容量{}", lexicon_data.name, lexicon_data.lexicon.len());
+                                                                            self.broadcast(PlayerResp::Notice{msg}).await;
+                                                                            self.config.lexicon = Lexicon::Git(lexicon_data)
+                                                                        } else {
+                                                                            let msg = format!("不合法的词库文件，请检查词库是否具有各自段");
+                                                                            self.broadcast(PlayerResp::Warn{msg}).await;
+                                                                        }
                                                                     } else {
-                                                                        let msg = format!("不合法的词库文件，请检查词库是否具有各自段");
+                                                                        let msg = format!("无法解码，请检查词库格式/地址");
                                                                         self.broadcast(PlayerResp::Warn{msg}).await;
                                                                     }
-                                                                } else {
-                                                                    let msg = format!("无法解码，请检查词库格式/地址");
-                                                                    self.broadcast(PlayerResp::Warn{msg}).await;
+                                                                }
+                                                                Err(err) => {
+                                                                    let msg = format!("网络错误， 状态码：{}", err.status().unwrap_or_default());
+                                                                    self.broadcast(PlayerResp::Warn { msg }).await;
                                                                 }
                                                             }
-                                                            Err(err) => {
-                                                                let msg = format!("网络错误， 状态码：{}", err.status().unwrap_or_default());
-                                                                self.broadcast(PlayerResp::Warn { msg }).await;
-                                                            }
-                                                        }
-                                                    },
-                                                    Err(err) => {
-                                                        let msg = format!("网络错误：{}", err);
-                                                        self.broadcast(PlayerResp::Warn { msg }).await;
-                                                    },
+                                                        },
+                                                        Err(err) => {
+                                                            let msg = format!("网络错误：{}", err);
+                                                            self.broadcast(PlayerResp::Warn { msg }).await;
+                                                        },
+                                                    }
+                                                } else {
+                                                    let msg = format!("地址只对了一半捏");
+                                                    self.broadcast(PlayerResp::Warn { msg }).await;
                                                 }
                                             } else {
-                                                let msg = format!("地址只对了一半捏");
+                                                let msg = format!("地址似乎不太对捏");
                                                 self.broadcast(PlayerResp::Warn { msg }).await;
                                             }
-                                        } else {
-                                            let msg = format!("地址似乎不太对捏");
-                                            self.broadcast(PlayerResp::Warn { msg }).await;
-                                        }
-
-                                    },
-                                    _ => {}
+    
+                                        },
+                                        _ => {}
+                                    }
+                                
                                 }
                             }
                             RoomReq::Timer(_) => {},
@@ -292,7 +295,7 @@ impl Room {
                             RoomReq::PlayerReq(idx, req) => {
                                 match req {
                                     PlayerReq::Chat {msg} => {
-                                        if idx != drawer_idx {
+                                        if idx != drawer_idx && self.players[idx].is_some() {
                                             let sender_name = self.players[idx].as_ref().unwrap().name.clone();
                                             // logic when sb. get the answer
                                             if self.check_answer(&msg) {
